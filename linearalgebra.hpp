@@ -3,6 +3,9 @@
 #include <cassert>
 #include <iostream>
 
+#define PI 3.14159265358979323846
+#define TAU (2 * PI)
+
 template<int n> 
 class Vector {
 public:
@@ -49,6 +52,16 @@ public:
 
     Vector<n> normalized() const {
         return *this / this->norm();
+    }
+
+    Vector<2> xy() const {
+        static_assert(n >= 2, "xy() is only defined for vectors of dimension 2 or higher.");
+        return {data[0], data[1]};
+    }
+
+    Vector<3> xyz() const {
+        static_assert(n >= 3, "xyz() is only defined for vectors of dimension 3 or higher.");
+        return {data[0], data[1], data[2]};
     }
 };
 
