@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.10.0)
+project(SimpleRender VERSION 0.1.0 LANGUAGES C CXX)
+
+file(GLOB SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+add_executable(SimpleRender ${SOURCES})
