@@ -63,6 +63,11 @@ public:
         static_assert(n >= 3, "xyz() is only defined for vectors of dimension 3 or higher.");
         return {data[0], data[1], data[2]};
     }
+
+    Vector<4> xyzw() const {
+        static_assert(n == 3);
+        return {data[0], data[1], data[2], 0};
+    }
 };
 
 template<int n>

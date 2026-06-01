@@ -1,6 +1,7 @@
 #include "simplegl.hpp"
 
 Matrix4 ModelView, Viewport, Projection;
+Matrix3 NormalMatrix;
 std::vector<double> zbuffer;
 
 void lookat(Vector3 eye, Vector3 center, Vector3 up) {
@@ -21,6 +22,11 @@ void lookat(Vector3 eye, Vector3 center, Vector3 up) {
             0, 0, 0, 1;
 
     ModelView = View.multiply(Model);
+
+    // 法线矩阵是模型视图矩阵的逆转置矩阵，但由于我们没有进行非均匀缩放，所以法线矩阵等于模型视图矩阵的左上3x3部分
+    NormalMatrix << x[0], x[1], x[2],
+                    y[0], y[1], y[2],
+                    z[0], z[1], z[2];
 }
 
 void init_viewport(int X, int Y, int w, int h) {
@@ -67,7 +73,7 @@ void line(int ax, int ay, int bx, int by, TGAImage& framebuffer, TGAColor color)
     }
 }
 
-void rasterize(const Triangle& clip, const IShader& shader, TGAImage& framebuffer) {
+void rasterize(const Triangle& clip, const Normal& norms, const UVcoords& uv, const IShader& shader, TGAImage& framebuffer) {
     Vector4 ndc[3] = { clip[0] / clip[0][3], clip[1] / clip[1][3], clip[2] / clip[2][3] };
     Vector2 screen[3] = { 
         Viewport.multiply(ndc[0]).xy(),
@@ -108,7 +114,9 @@ void rasterize(const Triangle& clip, const IShader& shader, TGAImage& framebuffe
                 double z = alpha * ndc[0][2] + beta * ndc[1][2] + gamma * ndc[2][2];
                 if (z < zbuffer[i + j * width]) { // 从 [-f, -n] 映射到 [-1, 1]，-f对应1，-n对应-1，因此z越小表示越近 
                     zbuffer[i + j * width] = z;
-                    framebuffer.set(i, j, shader.fragment({alpha, beta, gamma}).second);
+                    auto [bc, color] = shader.fragment({alpha, beta, gamma}, uv);
+                    if (bc) continue; // 如果片段着色器返回true，表示该片段被丢弃
+                    framebuffer.set(i, j, color);
                 }
             }
         }
