@@ -73,7 +73,7 @@ void line(int ax, int ay, int bx, int by, TGAImage& framebuffer, TGAColor color)
     }
 }
 
-void rasterize(const Triangle& clip, const Normal& norms, const UVcoords& uv, const IShader& shader, TGAImage& framebuffer) {
+void rasterize(const Triangle& clip, const IShader& shader, TGAImage& framebuffer) {
     Vector4 ndc[3] = { clip[0] / clip[0][3], clip[1] / clip[1][3], clip[2] / clip[2][3] };
     Vector2 screen[3] = { 
         Viewport.multiply(ndc[0]).xy(),
@@ -112,12 +112,11 @@ void rasterize(const Triangle& clip, const Normal& norms, const UVcoords& uv, co
                 double beta = s2 / signed_area;
                 double gamma = s3 / signed_area;
                 double z = alpha * ndc[0][2] + beta * ndc[1][2] + gamma * ndc[2][2];
-                if (z < zbuffer[i + j * width]) { // 从 [-f, -n] 映射到 [-1, 1]，-f对应1，-n对应-1，因此z越小表示越近 
-                    zbuffer[i + j * width] = z;
-                    auto [bc, color] = shader.fragment({alpha, beta, gamma}, uv);
-                    if (bc) continue; // 如果片段着色器返回true，表示该片段被丢弃
-                    framebuffer.set(i, j, color);
-                }
+                if (z >= zbuffer[i + j * width]) continue; // 从 [-f, -n] 映射到 [-1, 1]，-f对应1，-n对应-1，因此z越小表示越近 
+                auto [bc, color] = shader.fragment({alpha, beta, gamma});
+                if (bc) continue; // 如果片段着色器返回true，表示该片段被丢弃
+                framebuffer.set(i, j, color);
+                zbuffer[i + j * width] = z;
             }
         }
     }

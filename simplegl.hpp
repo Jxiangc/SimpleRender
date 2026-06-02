@@ -16,8 +16,7 @@ void init_zbuffer(int width, int height);
 class IShader {
 public:
     virtual std::pair<bool, TGAColor> fragment(const Vector3& bar) const = 0;
-    virtual std::pair<bool, TGAColor> fragment(const Vector3& bar, const UVcoords& uv) const = 0;
 };
 
 void line(int ax, int ay, int bx, int by, TGAImage& image, TGAColor color);
-void rasterize(const Triangle& clip, const Normal& norms, const UVcoords& uv, const IShader& shader, TGAImage& image);
+void rasterize(const Triangle& clip, const IShader& shader, TGAImage& image);

@@ -4,7 +4,6 @@
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
-#include <filesystem>
 #include <format>
 
 #include "simplegl.hpp"
@@ -35,57 +34,55 @@ Vector3 RGB2normal(const TGAColor& color) {
 class SimpleShader : public IShader {
 public:
     SimpleShader() = delete;
-    SimpleShader(const Model& m, const TGAImage& n, const Vector3& eye_dir, const Vector3& light_dir): model(m), nmap(n) {
-        l = light_dir.normalized();
-        v = eye_dir.normalized();
+    SimpleShader(const Model& m, const Vector3& light_dir): model(m) {
+        l = ModelView.multiply(Vector4{light_dir[0], light_dir[1], light_dir[2], 0}).xyz().normalized();
+        v = {0, 0, 1};
     }
 
-    virtual Vector4 vertex(const int iface, const int nth) const {
+    virtual Vector4 vertex(const int iface, const int nth) {
         Vector3 v = model.vert(iface, nth);
+        nrm[nth] = NormalMatrix.multiply(model.norm(iface, nth)).normalized();
+        uv[nth] = model.uv(iface, nth);
         Vector4 gl_Vertex = ModelView.multiply(Vector4{v[0], v[1], v[2], 1});
-        return Projection.multiply(gl_Vertex);
-    }
-
-    virtual Vector3 normal(const int iface, const int nth) const {
-        return NormalMatrix.multiply(model.norm(iface, nth));
-    }
-
-    virtual Vector2 uv(const int iface, const int nth) const {
-        return model.UVcoord(iface, nth);
+        return Projection.multiply(gl_Vertex); // 返回裁剪空间坐标
     }
 
     virtual std::pair<bool, TGAColor> fragment(const Vector3& bar) const override {
-        return {false, color};
-    }
-
-    virtual std::pair<bool, TGAColor> fragment(const Vector3& bar, const UVcoords& uv) const override {
         Vector3 h = (v + l).normalized();
-
         Vector2 curr_uv = uv[0] * bar[0] + uv[1] * bar[1] + uv[2] * bar[2];
-        int tx = std::clamp(static_cast<int>(curr_uv[0] * nmap.width()), 0, nmap.width() - 1);
-        int ty = std::clamp(static_cast<int>((1.0 - curr_uv[1]) * nmap.height()), 0, nmap.height() - 1); // 注意TGA的UV坐标系与屏幕坐标系的y轴方向相反，因此需要用1.0减去v坐标
-        Vector3 n = RGB2normal(nmap.get(tx, ty)).normalized();
+        
+        auto get_texture_color = [&](const TGAImage& image) {
+            int u = std::clamp(static_cast<int>(curr_uv[0] * image.width()), 0, image.width() - 1);
+            int v = std::clamp(static_cast<int>((1.0 - curr_uv[1]) * image.height()), 0, image.height() - 1);
+            return image.get(u, v);
+        };
+
+        Vector3 n = NormalMatrix.multiply(RGB2normal(get_texture_color(model.normal()))).normalized();
+        TGAColor diff = get_texture_color(model.diffuse());
+        TGAColor spec = get_texture_color(model.specular());
+
+        if (diff.bytespp == 4 && diff[3] < 255) return {true, {}}; 
 
         double ambient = intensity * Ka;
         double diffuse = intensity * Kd * std::max(0.0, n.dot(l));
         double specular = intensity * Ks * std::pow(std::max(0.0, n.dot(h)), shininess);
-        double intensity_sum = ambient + diffuse + specular;
 
-        return {false, TGAColor{
-            static_cast<uint8_t>(std::min(1.0, intensity_sum) * 255),
-            static_cast<uint8_t>(std::min(1.0, intensity_sum) * 255),
-            static_cast<uint8_t>(std::min(1.0, intensity_sum) * 255),
-            255
-        }};
+        TGAColor c;
+        for (int i = 0; i < 3; i++) {
+            c[i] = static_cast<int>(std::min(255.0, (ambient + diffuse) * diff[i] + specular * spec[2]));
+        }
+        return {false, c};
     }
 
     const Model& model;
-    const TGAImage& nmap;
+    Triangle tri;
+    Normal nrm;
+    UVcoords uv;
     Vector3 l;
     Vector3 v;
     double intensity = 1;
-    double Ka = 0.1, Kd = 0.8, Ks = 0.4;
-    double shininess = 16;
+    double Ka = 0.4, Kd = 1.0, Ks = 0.4;
+    double shininess = 32;
     TGAColor color = {};
 };
 
@@ -96,14 +93,6 @@ int main(int argc, char* argv[]){
     }
 
     srand(time(0));
-
-    std::vector<std::string> model_file_path;
-    std::vector<std::string> nmap_file_path;
-    for (int i = 1; i < argc; i++) {
-        std::string arg = argv[i];
-        if (arg.ends_with(".obj")) model_file_path.push_back(arg);
-        else if (arg.ends_with(".tga")) nmap_file_path.push_back(arg);
-    }
 
     constexpr int width  = 1024;
     constexpr int height = 1024;
@@ -116,20 +105,12 @@ int main(int argc, char* argv[]){
     init_perspective(PI / 3, width / static_cast<double>(height), 1, 10);
     init_zbuffer(width, height);
 
-    for (int m = 0; m < model_file_path.size(); m++) {
-        Model model(model_file_path[m]);
-        TGAImage nmap; nmap.read_tga_file(nmap_file_path[m]);
-        SimpleShader shader(model, nmap, eye - center, light - center);
+    for (int m = 1; m < argc; m++) {
+        Model model(argv[m]);
+        SimpleShader shader(model, light - center);
         for (int i = 0; i < model.nfaces(); i++) {
-            Triangle clip;
-            Normal norms;
-            UVcoords uv;
-            for (int j = 0; j < 3; j++) {
-                clip[j] = shader.vertex(i, j);
-                norms[j] = shader.normal(i, j);
-                uv[j] = shader.uv(i, j);
-            }
-            rasterize(clip, norms, uv, shader, framebuffer);
+            Triangle clip = {shader.vertex(i, 0), shader.vertex(i, 1), shader.vertex(i, 2)};
+            rasterize(clip, shader, framebuffer);
         }
     }
 

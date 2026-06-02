@@ -31,16 +31,24 @@ Model::Model(const std::string& filename){
         } else if (token == "vt") {
             Vector2 vt;
             iss >> vt[0] >> vt[1] >> trash;
-            uv.push_back(vt);
+            tex.push_back(vt);
         } else if (token == "f") {
             int v, vt, vn;
             while (iss >> v >> trash >> vt >> trash >> vn) {
                 facet_vrt.push_back(--v);
                 facet_nrm.push_back(--vn);
-                facet_uv.push_back(--vt);
+                facet_tex.push_back(--vt);
             }
         }
     }
+
+    auto load_texture = [&](const std::string& suffix, TGAImage& image) {
+        std::filesystem::path tex_path = std::filesystem::path(filename).replace_extension("").string() + suffix;
+        image.read_tga_file(tex_path.string());
+    };
+    load_texture("_nm.tga", normal_map);
+    load_texture("_diffuse.tga", diffuse_map);
+    load_texture("_spec.tga", specular_map);
 }
 
 Vector3 Model::vert(const int i) const {
@@ -59,12 +67,12 @@ Vector3 Model::norm(const int iface, const int nth) const {
     return norms[facet_nrm[3 * iface + nth]];
 }
 
-Vector2 Model::UVcoord(const int i) const {
-    return uv[i];
+Vector2 Model::uv(const int i) const {
+    return tex[i];
 }
 
-Vector2 Model::UVcoord(const int iface, const int nth) const {
-    return uv[facet_uv[3 * iface + nth]];
+Vector2 Model::uv(const int iface, const int nth) const {
+    return tex[facet_tex[3 * iface + nth]];
 }
 
 int Model::nverts() const {
