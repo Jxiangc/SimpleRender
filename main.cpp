@@ -23,7 +23,7 @@ TGAColor get_random_color(){
     return {b, g, r, a};
 }
 
-Vector3 RGB2normal(const TGAColor& color) {
+Vector3 RGB2normal(const TGAColor& color) { // [0, 255] -> [-1, 1]
     return Vector3{
         2.0 * color[2] / 255 - 1, // R -> X
         2.0 * color[1] / 255 - 1, // G -> Y
@@ -41,10 +41,10 @@ public:
 
     virtual Vector4 vertex(const int iface, const int nth) {
         Vector3 v = model.vert(iface, nth);
-        nrm[nth] = NormalMatrix.multiply(model.norm(iface, nth)).normalized();
+        tri[nth] = Vector4{v[0], v[1], v[2], 1};
+        nrm[nth] = model.norm(iface, nth);
         uv[nth] = model.uv(iface, nth);
-        Vector4 gl_Vertex = ModelView.multiply(Vector4{v[0], v[1], v[2], 1});
-        return Projection.multiply(gl_Vertex); // 返回裁剪空间坐标
+        return Projection.multiply(ModelView.multiply(tri[nth])); // 返回裁剪空间坐标
     }
 
     virtual std::pair<bool, TGAColor> fragment(const Vector3& bar) const override {
@@ -57,7 +57,21 @@ public:
             return image.get(u, v);
         };
 
-        Vector3 n = NormalMatrix.multiply(RGB2normal(get_texture_color(model.normal()))).normalized();
+        Matrix<2, 2> UV = {uv[1]- uv[0], uv[2] - uv[0]};
+        Vector3 n_model = (nrm[0] * bar[0] + nrm[1] * bar[1] + nrm[2] * bar[2]).normalized();
+        Vector3 n_tangent = RGB2normal(get_texture_color(model.normal()));
+        Vector3 n;
+
+        if (std::abs(UV.det()) < 1e-8) {
+            n = NormalMatrix.multiply(n_model).normalized();
+        } else {
+            Matrix<3, 2> Edge = {tri[1].xyz() - tri[0].xyz(), tri[2].xyz() - tri[0].xyz()};
+            Matrix<3, 2> TB = Edge.multiply(UV.inverse());
+            Vector3 t = TB[0], b = TB[1];
+            Matrix3 TBN = {t, b, n_model};
+            n = NormalMatrix.multiply(TBN.multiply(n_tangent)).normalized();
+        }
+
         TGAColor diff = get_texture_color(model.diffuse());
         TGAColor spec = get_texture_color(model.specular());
 

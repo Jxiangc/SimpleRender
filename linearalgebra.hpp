@@ -125,6 +125,14 @@ public:
         assert(i>=0 && i<rows && j>=0 && j<cols); 
         return data[j][i]; 
     }
+    Vector<rows>& operator[](const int i) {
+        assert(i >= 0 && i < cols);
+        return data[i];
+    }
+    Vector<rows> operator[](const int i) const {
+        assert(i >= 0 && i < cols);
+        return data[i];
+    }
 
     static Matrix<rows, cols> Identity() {
         Matrix<rows, cols> result;

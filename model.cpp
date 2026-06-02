@@ -46,7 +46,7 @@ Model::Model(const std::string& filename){
         std::filesystem::path tex_path = std::filesystem::path(filename).replace_extension("").string() + suffix;
         image.read_tga_file(tex_path.string());
     };
-    load_texture("_nm.tga", normal_map);
+    load_texture("_nm_tangent.tga", normal_map);
     load_texture("_diffuse.tga", diffuse_map);
     load_texture("_spec.tga", specular_map);
 }
