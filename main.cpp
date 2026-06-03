@@ -42,14 +42,20 @@ public:
     virtual Vector4 vertex(const int iface, const int nth) {
         Vector3 v = model.vert(iface, nth);
         tri[nth] = Vector4{v[0], v[1], v[2], 1};
+        Vector4 gl_Position = Projection.multiply(ModelView.multiply(tri[nth]));
+        w[nth] = gl_Position[3];
         nrm[nth] = model.norm(iface, nth);
         uv[nth] = model.uv(iface, nth);
-        return Projection.multiply(ModelView.multiply(tri[nth])); // 返回裁剪空间坐标
+        return gl_Position; // 返回裁剪空间坐标
     }
 
     virtual std::pair<bool, TGAColor> fragment(const Vector3& bar) const override {
         Vector3 h = (v + l).normalized();
-        Vector2 curr_uv = uv[0] * bar[0] + uv[1] * bar[1] + uv[2] * bar[2];
+
+        Vector3 correction_bar; // 深度插值矫正
+        double k = 1.0  / (bar[0] / w[0] + bar[1] / w[1] + bar[2] / w[2]);
+        for (int i = 0; i < 3; i++) correction_bar[i] = bar[i] / w[i] * k;
+        Vector2 curr_uv = uv[0] * correction_bar[0] + uv[1] * correction_bar[1] + uv[2] * correction_bar[2];
         
         auto get_texture_color = [&](const TGAImage& image) {
             int u = std::clamp(static_cast<int>(curr_uv[0] * image.width()), 0, image.width() - 1);
@@ -58,7 +64,7 @@ public:
         };
 
         Matrix<2, 2> UV = {uv[1]- uv[0], uv[2] - uv[0]};
-        Vector3 n_model = (nrm[0] * bar[0] + nrm[1] * bar[1] + nrm[2] * bar[2]).normalized();
+        Vector3 n_model = (nrm[0] * correction_bar[0] + nrm[1] * correction_bar[1] + nrm[2] * correction_bar[2]).normalized();
         Vector3 n_tangent = RGB2normal(get_texture_color(model.normal()));
         Vector3 n;
 
@@ -90,6 +96,7 @@ public:
 
     const Model& model;
     Triangle tri;
+    Vector3 w;
     Normal nrm;
     UVcoords uv;
     Vector3 l;
@@ -111,7 +118,7 @@ int main(int argc, char* argv[]){
     constexpr int width  = 1024;
     constexpr int height = 1024;
 
-    TGAImage framebuffer(width, height, TGAImage::RGB);
+    TGAImage framebuffer(width, height, TGAImage::RGB, {177, 195, 209, 255});
     Vector3 eye{-1, 0, 2}, center{0, 0, 0}, up{0, 1, 0}, light{1, 2, 2};
 
     lookat(eye, center, up);
