@@ -12,6 +12,7 @@ void lookat(Vector3 eye, Vector3 center, Vector3 up);
 void init_perspective(double fov, double aspect, double near, double far);
 void init_viewport(int X, int Y, int w, int h);
 void init_zbuffer(int width, int height);
+void init_lightzbuffer(int w, int h);
 
 class IShader {
 public:
@@ -20,3 +21,4 @@ public:
 
 void line(int ax, int ay, int bx, int by, TGAImage& image, TGAColor color);
 void rasterize(const Triangle& clip, const IShader& shader, TGAImage& image);
+void rasterize_depth(const Triangle& clip, int w, int h);

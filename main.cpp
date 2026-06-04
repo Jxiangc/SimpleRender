@@ -11,9 +11,14 @@
 #include "linearalgebra.hpp"
 #include "model.hpp"
 
+constexpr int width  = 1024;
+    constexpr int height = 1024;
+
 extern Matrix4 ModelView, Viewport, Projection;
 extern Matrix3 NormalMatrix;
+extern Matrix4 light_MVP;
 extern std::vector<double> zbuffer;
+extern std::vector<double> lightzbuffer;
 
 TGAColor get_random_color(){
     uint8_t b = static_cast<uint8_t>(rand() % 255);
@@ -57,6 +62,18 @@ public:
         for (int i = 0; i < 3; i++) correction_bar[i] = bar[i] / w[i] * k;
         Vector2 curr_uv = uv[0] * correction_bar[0] + uv[1] * correction_bar[1] + uv[2] * correction_bar[2];
         
+        // 阴影映射
+        double shadow = 1.0;
+        Vector3 wp = (tri[0] * correction_bar[0] + 
+                      tri[1] * correction_bar[1] + 
+                      tri[2] * correction_bar[2]).xyz();
+        Vector4 lclip = light_MVP.multiply({wp[0], wp[1], wp[2] , 1});
+        Vector4 lndc = lclip / lclip[3];
+        Vector2 ls = Viewport.multiply(lndc).xy();
+        int cur = static_cast<int>(ls[0]) + static_cast<int>(ls[1]) * width;
+        if (cur >= 0 && cur < lightzbuffer.size()) shadow = lndc[2] > lightzbuffer[cur] + 0.001 ? 0.3 : 1.0;
+        // 计算路径不同得到的误差不同，lightzbuffer经历三个步骤，累计误差更多
+
         auto get_texture_color = [&](const TGAImage& image) {
             int u = std::clamp(static_cast<int>(curr_uv[0] * image.width()), 0, image.width() - 1);
             int v = std::clamp(static_cast<int>((1.0 - curr_uv[1]) * image.height()), 0, image.height() - 1);
@@ -89,7 +106,8 @@ public:
 
         TGAColor c;
         for (int i = 0; i < 3; i++) {
-            c[i] = static_cast<int>(std::min(255.0, (ambient + diffuse) * diff[i] + specular * spec[2]));
+            c[i] = static_cast<int>(std::min(255.0, 
+                   ambient * diff[i] + (diffuse * diff[i] + specular * spec[2]) * shadow));
         }
         return {false, c};
     }
@@ -102,7 +120,7 @@ public:
     Vector3 l;
     Vector3 v;
     double intensity = 1;
-    double Ka = 0.4, Kd = 1.0, Ks = 0.4;
+    double Ka = 0.2, Kd = 0.8, Ks = 0.4;
     double shininess = 32;
     TGAColor color = {};
 };
@@ -112,33 +130,45 @@ int main(int argc, char* argv[]){
         std::cerr << std::format("Usage: %s <model.obj> [<nm.tga>]\n", argv[0]);
         return 1;
     }
+    std::vector<Model> model;
+    for (int m = 1; m < argc; m++) model.emplace_back(argv[m]);
 
     srand(time(0));
-
-    constexpr int width  = 1024;
-    constexpr int height = 1024;
 
     TGAImage framebuffer(width, height, TGAImage::RGB, {177, 195, 209, 255});
     Vector3 eye{-1, 0, 2}, center{0, 0, 0}, up{0, 1, 0}, light{1, 2, 2};
 
-    lookat(eye, center, up);
+    lookat(light, center, up);
+    init_lightzbuffer(width, height);
     init_viewport(width / 16, height / 16, width * 7 / 8, height * 7 / 8);
     init_perspective(PI / 3, width / static_cast<double>(height), 1, 10);
+
+    light_MVP = Projection.multiply(ModelView.multiply(Matrix4::Identity()));
+
+    for (int m = 0; m < model.size(); m++) {
+        for (int i = 0; i < model[m].nfaces(); i++) {
+            Triangle clip;
+            for (int j = 0; j < 3; j++) {
+                Vector3 v = model[m].vert(i, j);
+                clip[j] = Projection.multiply(ModelView.multiply({v[0], v[1], v[2], 1}));
+            }
+            rasterize_depth(clip, width, height);
+        }
+    }
+
+    lookat(eye, center, up);
     init_zbuffer(width, height);
 
-    for (int m = 1; m < argc; m++) {
-        Model model(argv[m]);
-        SimpleShader shader(model, light - center);
-        for (int i = 0; i < model.nfaces(); i++) {
+    for (int m = 0; m < model.size(); m++) {
+        SimpleShader shader(model[m], light - center);
+        for (int i = 0; i < model[m].nfaces(); i++) {
             Triangle clip = {shader.vertex(i, 0), shader.vertex(i, 1), shader.vertex(i, 2)};
             rasterize(clip, shader, framebuffer);
         }
     }
 
-    std::string output_filename = "framebuffer.tga";
     std::filesystem::path name = std::filesystem::path(argv[1]).stem();
-    output_filename = name.string() + ".tga";
-    framebuffer.write_tga_file(output_filename);
+    framebuffer.write_tga_file(name.string() + ".tga");
 
     return 0;
 }

@@ -2,7 +2,9 @@
 
 Matrix4 ModelView, Viewport, Projection;
 Matrix3 NormalMatrix;
+Matrix4 light_MVP;
 std::vector<double> zbuffer;
+std::vector<double> lightzbuffer;
 
 void lookat(Vector3 eye, Vector3 center, Vector3 up) {
     Vector3 z = (eye - center).normalized();
@@ -49,6 +51,10 @@ void init_zbuffer(int width, int height) {
     zbuffer.assign(width * height, std::numeric_limits<double>::infinity());
 }
 
+void init_lightzbuffer(int w, int h) {
+    lightzbuffer.assign(w * h, std::numeric_limits<double>::infinity());
+}
+
 void line(int ax, int ay, int bx, int by, TGAImage& framebuffer, TGAColor color) {
     bool steep = std::abs(by - ay) > std::abs(bx - ax);
     if (steep) {
@@ -73,51 +79,76 @@ void line(int ax, int ay, int bx, int by, TGAImage& framebuffer, TGAColor color)
     }
 }
 
-void rasterize(const Triangle& clip, const IShader& shader, TGAImage& framebuffer) {
-    Vector4 ndc[3] = { clip[0] / clip[0][3], clip[1] / clip[1][3], clip[2] / clip[2][3] };
-    Vector2 screen[3] = { 
-        Viewport.multiply(ndc[0]).xy(),
-        Viewport.multiply(ndc[1]).xy(),
-        Viewport.multiply(ndc[2]).xy()
-    };
+struct TriangleSetup {
+    Vector4 ndc[3];
+    Vector2 screen[3];
+    double signed_area;
+    int left, right, bottom, top;
 
-    auto area = [&](Vector2 a, Vector2 b, Vector2 c) -> double {
-        return (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
-    };
+    TriangleSetup(const Triangle& clip) {
+        ndc[0] = clip[0] / clip[0][3]; ndc[1] = clip[1] / clip[1][3]; ndc[2] = clip[2] / clip[2][3];
+        screen[0] = Viewport.multiply(ndc[0]).xy();
+        screen[1] = Viewport.multiply(ndc[1]).xy();
+        screen[2] = Viewport.multiply(ndc[2]).xy();
 
-    double s1, s2, s3;
-    auto inside = [&](double x, double y) -> bool {
-        s1 = area({x, y}, screen[1], screen[2]);
-        s2 = area(screen[0], {x, y}, screen[2]);
-        s3 = area(screen[0], screen[1], {x, y});
+        signed_area = area2(screen[0], screen[1], screen[2]);
+        left   = static_cast<int>(std::floor(std::min({screen[0][0], screen[1][0], screen[2][0]})));
+        right  = static_cast<int>(std::ceil (std::max({screen[0][0], screen[1][0], screen[2][0]})));
+        bottom = static_cast<int>(std::floor(std::min({screen[0][1], screen[1][1], screen[2][1]})));
+        top    = static_cast<int>(std::ceil (std::max({screen[0][1], screen[1][1], screen[2][1]})));
+    }
+
+    bool valid() const { return signed_area >= 1; }
+
+    static double area2(Vector2 a, Vector2 b, Vector2 c) {
+        return a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]);
+    }
+
+    bool inside(double& s1, double& s2, double& s3, double x, double y) const {
+        s1 = area2({x, y}, screen[1], screen[2]);
+        s2 = area2(screen[0], {x, y}, screen[2]);
+        s3 = area2(screen[0], screen[1], {x, y});
         return s1 * s2 >= 0 && s1 * s3 >= 0 && s2 * s3 >= 0;
-    };
+    }
+};
 
-    double signed_area = area(screen[0], screen[1], screen[2]);
-    if (signed_area < 1) return;
+void rasterize(const Triangle& clip, const IShader& shader, TGAImage& framebuffer) {
+    TriangleSetup setup(clip);
+    if (!setup.valid()) return;
 
-    int left = static_cast<int>(std::floor(std::min({screen[0][0], screen[1][0], screen[2][0]})));
-    int right = static_cast<int>(std::ceil(std::max({screen[0][0], screen[1][0], screen[2][0]})));
-    int bottom = static_cast<int>(std::floor(std::min({screen[0][1], screen[1][1], screen[2][1]})));
-    int top = static_cast<int>(std::ceil(std::max({screen[0][1], screen[1][1], screen[2][1]})));
-
-    int width = framebuffer.width();
-    int height = framebuffer.height();
+    int w = framebuffer.width(), h = framebuffer.height();
+    double S = setup.signed_area;
 
 #pragma omp parallel for
-    for (int i = std::max(0, left); i <= std::min(width - 1, right); i++) {
-        for (int j = std::max(0, bottom); j <= std::min(height - 1, top); j++) {
-            if (inside(i + 0.5, j + 0.5)) {
-                double alpha = s1 / signed_area;
-                double beta = s2 / signed_area;
-                double gamma = s3 / signed_area;
-                double z = alpha * ndc[0][2] + beta * ndc[1][2] + gamma * ndc[2][2];
-                if (z >= zbuffer[i + j * width]) continue; // 从 [-f, -n] 映射到 [-1, 1]，-f对应1，-n对应-1，因此z越小表示越近 
-                auto [bc, color] = shader.fragment({alpha, beta, gamma});
-                if (bc) continue; // 如果片段着色器返回true，表示该片段被丢弃
-                framebuffer.set(i, j, color);
-                zbuffer[i + j * width] = z;
-            }
+    for (int i = std::max(0, setup.left); i <= std::min(w - 1, setup.right); i++) {
+        for (int j = std::max(0, setup.bottom); j <= std::min(h - 1, setup.top); j++) {
+            double s1, s2, s3;
+            if (!setup.inside(s1, s2, s3, i + 0.5, j + 0.5)) continue;
+            double alpha = s1 / S, beta = s2 / S, gamma = s3 / S;
+            double z = alpha * setup.ndc[0][2] + beta * setup.ndc[1][2] + gamma * setup.ndc[2][2];
+            if (z >= zbuffer[i + j * w]) continue;
+            auto [bc, color] = shader.fragment({alpha, beta, gamma});
+            if (bc) continue;
+            framebuffer.set(i, j, color);
+            zbuffer[i + j * w] = z;
+        }
+    }
+}
+
+void rasterize_depth(const Triangle& clip, int w, int h) {
+    TriangleSetup setup(clip);
+    if (!setup.valid()) return;
+
+    double S = setup.signed_area;
+
+#pragma omp parallel for
+    for (int i = std::max(0, setup.left); i <= std::min(w - 1, setup.right); i++) {
+        for (int j = std::max(0, setup.bottom); j <= std::min(h - 1, setup.top); j++) {
+            double s1, s2, s3;
+            if (!setup.inside(s1, s2, s3, i + 0.5, j + 0.5)) continue;
+            double z = (s1 * setup.ndc[0][2] + s2 * setup.ndc[1][2] + s3 * setup.ndc[2][2]) / S;
+            if (z >= lightzbuffer[i + j * w]) continue;
+            lightzbuffer[i + j * w] = z;
         }
     }
 }
