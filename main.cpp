@@ -12,7 +12,7 @@
 #include "model.hpp"
 
 constexpr int width  = 1024;
-    constexpr int height = 1024;
+constexpr int height = 1024;
 
 extern Matrix4 ModelView, Viewport, Projection;
 extern Matrix3 NormalMatrix;
